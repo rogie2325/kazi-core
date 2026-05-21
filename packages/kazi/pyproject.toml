@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kazi"
+version = "0.1.0"
+description = "Production-grade AI orchestration: LangGraph + LlamaIndex + MCP + A2A — batteries included"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["ai", "agents", "orchestration", "langgraph", "llamaindex", "mcp", "a2a", "kazi"]
+
+# kazi is the batteries-included meta-package.
+# It installs kazi-core which pulls in all layers.
+dependencies = [
+    "kazi-core>=0.1.0",
+]
+
+[project.optional-dependencies]
+openai = ["kazi-core[openai]"]
+anthropic = ["kazi-core[anthropic]"]
+google = ["kazi-core[google]"]
+local = ["kazi-core[local]"]
+all = ["kazi-core[all]"]
+
+# No Python files — pure meta-package that re-exports kazi-core
+[tool.hatch.build]
+include = []
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

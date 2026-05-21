@@ -1,0 +1,50 @@
+[
+  {
+    "VendorId": "V001",
+    "Name": "Acme Supplies Ltd  ",
+    "CountryCode": "UK",
+    "TaxNumber": "GB123456789",
+    "PaymentTerms": "NET30",
+    "IBAN": "GB29NWBK60161331926819",
+    "Email": "accounts@acme.co.uk",
+    "Phone": "+44 20 7946 0001",
+    "City": "London",
+    "PostalCode": "EC1A 1BB"
+  },
+  {
+    "VendorId": "V002",
+    "Name": "Global Parts GmbH",
+    "CountryCode": "DE",
+    "TaxNumber": "",
+    "PaymentTerms": "NET60",
+    "IBAN": "",
+    "Email": "purchasing@globalparts.de",
+    "Phone": "0049-89-12345678",
+    "City": "München ",
+    "PostalCode": "80331"
+  },
+  {
+    "VendorId": "V003",
+    "Name": "Global Parts GmbH",
+    "CountryCode": "DE",
+    "TaxNumber": "",
+    "PaymentTerms": "NET60",
+    "IBAN": "",
+    "Email": "purchasing@globalparts.de",
+    "Phone": "0049-89-12345678",
+    "City": "München ",
+    "PostalCode": "80331"
+  },
+  {
+    "VendorId": "V004",
+    "Name": "FastShip Logistics",
+    "CountryCode": "US",
+    "TaxNumber": "12-3456789",
+    "PaymentTerms": "NET15",
+    "IBAN": "INVALID-IBAN-VALUE",
+    "Email": "billing@fastship",
+    "Phone": "1800FASTSHIP",
+    "City": "Chicago",
+    "PostalCode": "60601"
+  }
+]

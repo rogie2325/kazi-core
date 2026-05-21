@@ -1,0 +1,28 @@
+[
+  {
+    "CustomerId": "C001",
+    "Name": "Sunrise Retail GmbH",
+    "CountryCode": "DE",
+    "TaxNumber": "DE987654321",
+    "CreditLimit": "50000.00",
+    "Currency": "EUR",
+    "Email": "accounts@sunrise-retail.de",
+    "Phone": "+49 30 1234567",
+    "City": "Berlin",
+    "PostalCode": "10115",
+    "DuplicateIndicator": "X"
+  },
+  {
+    "CustomerId": "C002",
+    "Name": "Sunrise Retail GmbH",
+    "CountryCode": "DE",
+    "TaxNumber": "DE987654321",
+    "CreditLimit": "50000.00",
+    "Currency": "EUR",
+    "Email": "accounts@sunrise-retail.de",
+    "Phone": "+49 30 1234567",
+    "City": "Berlin",
+    "PostalCode": "10115",
+    "DuplicateIndicator": "X"
+  }
+]

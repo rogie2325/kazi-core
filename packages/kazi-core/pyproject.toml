@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kazi-core"
+version = "0.1.1"
+description = "Full AI orchestration engine: LangGraph + LlamaIndex + MCP + A2A in 20 lines"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["ai", "agents", "orchestration", "langgraph", "mcp", "a2a", "kazi"]
+
+dependencies = [
+    "kazi-base>=0.1.0",
+    "kazi-rag>=0.1.0",
+    "kazi-mcp>=0.1.0",
+    "kazi-a2a>=0.1.0",
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "aiosqlite>=0.20.0",
+]
+
+[project.optional-dependencies]
+openai = [
+    "kazi-base[openai]",
+    "kazi-rag[openai]",
+    "langchain-openai>=0.2.0",
+    "llama-index-llms-openai>=0.2.0",
+    "llama-index-embeddings-openai>=0.2.0",
+]
+anthropic = [
+    "kazi-base[anthropic]",
+    "kazi-rag[anthropic]",
+    "langchain-anthropic>=0.2.0",
+]
+google = [
+    "kazi-base[google]",
+    "langchain-google-genai>=2.0.0",
+]
+local = [
+    "kazi-base[local]",
+]
+redis = ["langgraph-checkpoint-redis>=0.1.0", "redis>=5.0.0"]
+postgres = ["langgraph-checkpoint-postgres>=1.0.0", "psycopg[binary]>=3.1.0"]
+serve = ["fastapi>=0.115.0", "uvicorn[standard]>=0.32.0", "python-multipart>=0.0.12"]
+data = ["pandas>=2.0.0", "openpyxl>=3.1.0"]
+data-polars = ["polars>=0.20.0", "openpyxl>=3.1.0"]
+arq = ["arq>=0.25.0"]
+celery = ["celery>=5.3.0"]
+all = ["kazi-core[openai,anthropic,google,local,redis,postgres,serve,data,arq]"]
+
+[project.scripts]
+kazi = "kazi.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kazi"]
