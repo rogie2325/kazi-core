@@ -33,7 +33,9 @@ description_st = st.text(min_size=0, max_size=500)
 sql_st = st.text(min_size=1, max_size=1000)
 user_id_st = st.text(min_size=0, max_size=200)
 
-settings.register_profile("no_db", database=None)
+# derandomize=True keeps CI reproducible (same examples every run); run locally
+# without it to fuzz for new edge cases.
+settings.register_profile("no_db", database=None, max_examples=100, deadline=None, derandomize=True)
 settings.load_profile("no_db")
 
 

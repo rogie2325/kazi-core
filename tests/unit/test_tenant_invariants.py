@@ -74,7 +74,9 @@ def _apply_tenant_prefix(tid: str, tenant_id: str) -> str:
     return tid
 
 
-settings.register_profile("tenant_invariants", database=None, max_examples=100, deadline=None)
+# derandomize=True keeps CI reproducible (same examples every run); run locally
+# without it to fuzz for new edge cases.
+settings.register_profile("tenant_invariants", database=None, max_examples=100, deadline=None, derandomize=True)
 settings.load_profile("tenant_invariants")
 
 

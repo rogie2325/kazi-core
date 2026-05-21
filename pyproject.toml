@@ -40,6 +40,10 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# The authoritative source tree is the repo-root `kazi/` package, imported via
+# the repo root rather than a pip install (installing the kazi-* packages would
+# shadow it with re-export subsets). Keep the root on sys.path for all runs.
+pythonpath = ["."]
 addopts = "--cov=kazi --cov-report=term-missing"
 markers = [
     "chaos: fault-injection tests (Redis kill, LLM 429s, MCP disconnect, DLQ delivery)",

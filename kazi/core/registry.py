@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -146,10 +147,12 @@ class ToolRegistry:
             if param_name in ("self", "cls"):
                 continue
             raw_type = hints.get(param_name, str)
-            # Handle Optional[X] → X
+            # Handle Optional[X] / Union[X, None] / X | None → X
+            # Note: PEP 604 unions (`int | None`) are types.UnionType, which has
+            # no __origin__ before Python 3.14, so detect them explicitly.
             origin = getattr(raw_type, "__origin__", None)
             args = getattr(raw_type, "__args__", ())
-            if origin is not None and args:
+            if args and (origin is not None or isinstance(raw_type, types.UnionType)):
                 raw_type = next((a for a in args if a is not type(None)), str)
 
             json_type = _PYTHON_TO_JSON.get(raw_type, "string")

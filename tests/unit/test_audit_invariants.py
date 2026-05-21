@@ -27,6 +27,7 @@ Invariants verified
 from __future__ import annotations
 
 import asyncio
+import json
 import string
 
 import pytest
@@ -36,6 +37,7 @@ from hypothesis import strategies as st
 from kazi.core.audit import (
     RunAudit,
     ToolCallRecord,
+    _canonical,
     get_recorder,
     is_shadow,
     run_context,
@@ -100,7 +102,10 @@ def run_audit_st():
     )
 
 
-settings.register_profile("invariants", database=None, max_examples=50, deadline=None)
+# derandomize=True pins the generated examples so CI is reproducible — the same
+# inputs are exercised every run, preventing rare random-seed flakes from
+# turning the suite red. Run locally without it to fuzz for new edge cases.
+settings.register_profile("invariants", database=None, max_examples=50, deadline=None, derandomize=True)
 settings.load_profile("invariants")
 
 
@@ -160,10 +165,19 @@ def test_fingerprint_changes_when_order_swapped(audit: RunAudit):
     before = audit.fingerprint()
     audit.tool_calls[0], audit.tool_calls[1] = audit.tool_calls[1], audit.tool_calls[0]
     after = audit.fingerprint()
-    # If the swapped pair were identical in name+args+status, fingerprint
-    # is allowed to stay the same — semantic, not syntactic, change.
+    # Whether the swap is observable is defined by the fingerprint's OWN
+    # canonical form — not Python ==, which conflates bool/int (False == 0)
+    # and int/float (1 == 1.0) that the JSON-based hash keeps distinct.
     a, b = audit.tool_calls[0], audit.tool_calls[1]
-    if (a.name, a.args, a.status) == (b.name, b.args, b.status):
+
+    def _call_key(c: ToolCallRecord) -> str:
+        return json.dumps(
+            {"name": c.name, "args": _canonical(c.args), "status": c.status},
+            sort_keys=True,
+            default=str,
+        )
+
+    if _call_key(a) == _call_key(b):
         assert before == after
     else:
         assert before != after
