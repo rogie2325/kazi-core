@@ -55,7 +55,9 @@ jobs:
       # The authoritative source is the repo-root `kazi/` tree, kept on sys.path
       # via [tool.pytest.ini_options] pythonpath in pyproject.toml — the kazi-*
       # packages are intentionally NOT installed (they'd shadow it with subsets).
+      # Real API tests only run on py3.12 — API behaviour is Python-version-agnostic
+      # so running them on 3.11 and 3.13 as well just burns API credits and time.
       - name: Run unit + integration tests
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ matrix.python-version == '3.12' && secrets.OPENAI_API_KEY || '' }}
         run: pytest tests/unit/ tests/integration/ -q --cov=kazi --cov-report=term-missing --cov-fail-under=57
