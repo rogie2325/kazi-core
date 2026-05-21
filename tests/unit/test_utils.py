@@ -57,6 +57,8 @@ def test_configure_logging_disables_propagation():
     _fresh_kazi_logger()
     configure_logging()
     assert logging.getLogger("kazi").propagate is False
+    # Restore so subsequent tests' caplog capture (which needs propagate=True) works.
+    logging.getLogger("kazi").propagate = True
 
 
 def test_configure_logging_accepts_custom_handler():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -22,6 +23,11 @@ from kazi.core.router import ModelRoute
 from kazi.core.token_budget import TokenBudget, maybe_summarise
 
 logger = logging.getLogger(__name__)
+
+# Carries the active TokenBudget into LangGraph node closures via async context.
+# Using a ContextVar (instead of a dict keyed by thread_id) is reliable across
+# all asyncio implementations and task-spawning strategies.
+_run_budget: contextvars.ContextVar[Any] = contextvars.ContextVar("_run_budget", default=None)
 
 if TYPE_CHECKING:
     from kazi.core.events import StreamEvent
@@ -267,10 +273,8 @@ class GraphBrain:
                 if allowed is not None:
                     all_tools = [t for t in all_tools if t.name in allowed]
 
-            # -- Token budget: stored on self (never in state — checkpointer can't serialize it)
-            budget: TokenBudget | None = self._active_budgets.get(
-                state.get("thread_id", "default")
-            )
+            # -- Token budget: retrieved via contextvar (set by run() before ainvoke)
+            budget: TokenBudget | None = _run_budget.get()
 
             # -- Summarise history if it has grown too long
             messages = list(state["messages"])
@@ -339,9 +343,7 @@ class GraphBrain:
             assert hasattr(last, "tool_calls") and last.tool_calls
             results: list[ToolMessage] = []
             calls_made = state.get("tool_calls_made", 0)
-            budget: TokenBudget | None = self._active_budgets.get(
-                state.get("thread_id", "default")
-            )
+            budget: TokenBudget | None = _run_budget.get()
 
             for tc in last.tool_calls:
                 name = tc["name"]
@@ -657,12 +659,12 @@ class GraphBrain:
 
         lg_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
 
-        # Serialize concurrent runs on the same thread_id so budgets don't
-        # overwrite each other.  Different thread_ids are unaffected.
+        budget = TokenBudget(self.config.budget, model=self.config.llm.model)
+        # Store in both the dict (for backward compat / concurrent-run isolation)
+        # and a ContextVar so LangGraph node closures can always find it.
         async with self._budget_lock:
-            self._active_budgets[thread_id] = TokenBudget(
-                self.config.budget, model=self.config.llm.model
-            )
+            self._active_budgets[thread_id] = budget
+        budget_token = _run_budget.set(budget)
 
         initial: AgentState = {
             "messages": [self._build_human_message(message, images)],
@@ -680,6 +682,7 @@ class GraphBrain:
                     raise RuntimeError("Graph is not initialised")
                 final = await self._graph.ainvoke(initial, config=lg_config)
         finally:
+            _run_budget.reset(budget_token)
             async with self._budget_lock:
                 self._active_budgets.pop(thread_id, None)
 
@@ -713,10 +716,10 @@ class GraphBrain:
 
         lg_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
 
+        budget = TokenBudget(self.config.budget, model=self.config.llm.model)
         async with self._budget_lock:
-            self._active_budgets[thread_id] = TokenBudget(
-                self.config.budget, model=self.config.llm.model
-            )
+            self._active_budgets[thread_id] = budget
+        budget_token = _run_budget.set(budget)
 
         initial: AgentState = {
             "messages": [HumanMessage(content=message)],
@@ -772,6 +775,7 @@ class GraphBrain:
                     state = await self._graph_with_interrupt.ainvoke(None, config=lg_config)
 
         finally:
+            _run_budget.reset(budget_token)
             async with self._budget_lock:
                 self._active_budgets.pop(thread_id, None)
 
