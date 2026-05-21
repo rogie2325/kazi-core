@@ -41,3 +41,10 @@ aiohttp>=3.9
 
 # Serve layer (integration tests for FastAPI mount)
 fastapi>=0.110
+
+# MCP client bridge (integration tests spawn an actual MCP subprocess)
+mcp>=1.0
+
+# RAG / embedding (custom provider integration tests)
+llama-index-core>=0.10
+llama-index-llms-openai>=0.1

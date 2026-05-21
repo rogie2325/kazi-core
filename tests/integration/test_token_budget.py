@@ -67,6 +67,8 @@ async def test_no_budget_limit_never_raises():
 @pytest.mark.asyncio
 async def test_budget_is_charged_not_zero():
     """Verify the budget object actually accumulates charges (not always zero)."""
+    from unittest.mock import patch
+
     from kazi.core.token_budget import TokenBudget
 
     charged_values: list[int] = []
@@ -78,11 +80,8 @@ async def test_budget_is_charged_not_zero():
 
     brain = _brain_with_mock("Hello, world!", TokenBudgetConfig(max_tokens_per_run=50_000))
 
-    TokenBudget._check = spy_check
-    try:
+    with patch.object(TokenBudget, "_check", spy_check):
         await brain.run("hi")
-    finally:
-        TokenBudget._check = original_check
 
     # At least one charge must have been non-zero
     assert any(v > 0 for v in charged_values), (

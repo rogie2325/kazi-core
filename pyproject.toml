@@ -45,6 +45,7 @@ testpaths = ["tests"]
 # shadow it with re-export subsets). Keep the root on sys.path for all runs.
 pythonpath = ["."]
 addopts = "--cov=kazi --cov-report=term-missing"
+log_level = "WARNING"
 markers = [
     "chaos: fault-injection tests (Redis kill, LLM 429s, MCP disconnect, DLQ delivery)",
     "eval: declarative scenario tests for go/no-go validation of generated integrations",

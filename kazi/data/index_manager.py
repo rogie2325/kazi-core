@@ -54,6 +54,13 @@ class IndexManager:
         if self.config.custom_embedding is not None and self.config.custom_synthesis_llm is not None:
             return
 
+        # If only a custom embedding is provided, use MockLLM as synthesis default
+        # so provider-specific LLM setup (which may require API keys) is skipped.
+        if self.config.custom_embedding is not None and self.config.custom_synthesis_llm is None:
+            from llama_index.core.llms.mock import MockLLM
+            Settings.llm = MockLLM()
+            return
+
         provider = self.llm_config.provider.value
 
         if provider == "openai":
@@ -67,7 +74,7 @@ class IndexManager:
                         model=self.config.embedding_model,
                         api_key=api_key,
                     )
-                if self.config.custom_synthesis_llm is None:
+                if self.config.custom_synthesis_llm is None and api_key:
                     Settings.llm = OpenAI(
                         model=self.llm_config.model,
                         temperature=self.llm_config.temperature,
