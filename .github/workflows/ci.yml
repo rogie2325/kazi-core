@@ -25,7 +25,7 @@ jobs:
         run: ruff check kazi/
 
   test:
-    name: Unit tests (py${{ matrix.python-version }})
+    name: Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -45,5 +45,5 @@ jobs:
       # The authoritative source is the repo-root `kazi/` tree, kept on sys.path
       # via [tool.pytest.ini_options] pythonpath in pyproject.toml — the kazi-*
       # packages are intentionally NOT installed (they'd shadow it with subsets).
-      - name: Run unit tests
-        run: pytest tests/unit/ -q --no-cov
+      - name: Run unit + integration tests
+        run: pytest tests/unit/ tests/integration/ -q --cov=kazi --cov-report=term-missing --cov-fail-under=57

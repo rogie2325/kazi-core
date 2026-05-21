@@ -1,11 +1,9 @@
-# Dependency set for CI unit tests.
+# Dependency set for CI (unit + integration tests).
 #
 # The authoritative source tree lives at the repo-root `kazi/` package and is
 # imported via pythonpath (see [tool.pytest.ini_options] in pyproject.toml) —
 # NOT pip-installed, because installing the `kazi-*` packages would shadow the
 # root tree with their re-export subsets. So CI installs only third-party deps.
-#
-# This is the minimal set that makes `pytest tests/unit/` pass on 3.11–3.13.
 
 # Test tooling
 pytest>=8.0
@@ -34,3 +32,12 @@ sqlalchemy>=2.0
 opentelemetry-api>=1.20.0
 opentelemetry-sdk>=1.20.0
 opentelemetry-exporter-otlp>=1.20.0
+
+# Queue / task workers (integration tests for celery + arq + webhook)
+celery[redis]>=5.3
+redis>=4.0
+arq>=0.26
+aiohttp>=3.9
+
+# Serve layer (integration tests for FastAPI mount)
+fastapi>=0.110
