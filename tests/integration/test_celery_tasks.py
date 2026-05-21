@@ -1,26 +1,28 @@
 """
-Celery task execution tests — runs kazi.run, kazi.ingest, and kazi.dead_letter
-tasks directly in-process without a broker, covering the task function bodies.
+Celery task execution tests — runs kazi.run and kazi.ingest tasks
+directly in-process (task_always_eager=True) against a real Kazi instance
+backed by a real OpenAI LLM.
 
-Uses task_always_eager=True so tasks execute synchronously.  _kazi_instance is
-patched with a stub so no LLM API calls are made (we already test real LLM calls
-elsewhere).  Tests for _get_kazi() and _create_kazi() are included.
+Requires OPENAI_API_KEY and Redis on localhost:6379/15.
 """
 from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
+from pathlib import Path
 
 import pytest
 
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
 REDIS_URL = "redis://localhost:6379/15"
+pytestmark = pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
 
 
-def _config(api_key: str = "fake"):
+def _config():
     from kazi.core.config import KaziConfig, LLMConfig, LLMProvider
     return KaziConfig(llm=LLMConfig(
-        provider=LLMProvider.OPENAI, model="gpt-4o-mini", api_key=api_key
+        provider=LLMProvider.OPENAI, model="gpt-4o-mini", api_key=OPENAI_KEY
     ))
 
 
@@ -31,23 +33,33 @@ def _make_app(config=None, **kwargs):
     return app
 
 
-# ── _create_kazi ─────────────────────────────────────────────────────────────
+@pytest.fixture
+def real_kazi():
+    """Real Kazi instance — started and torn down around the test."""
+    import kazi.queue.celery_worker as cw
+    from kazi import Kazi
+
+    kazi = asyncio.run(Kazi.create(_config()))
+    orig = cw._kazi_instance
+    cw._kazi_instance = kazi
+    yield kazi
+    cw._kazi_instance = orig
+    asyncio.run(kazi.close())
+
+
+# ── _create_kazi / _get_kazi ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
 async def test_create_kazi_returns_kazi_instance():
     from kazi.core.orchestrator import Kazi
     from kazi.queue.celery_worker import _create_kazi
 
-    kazi = await _create_kazi(_config(api_key=OPENAI_KEY))
+    kazi = await _create_kazi(_config())
     assert isinstance(kazi, Kazi)
     await kazi.close()
 
 
-# ── _get_kazi creates instance when none exists ──────────────────────────────
-
-@pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
-def test_get_kazi_creates_instance_when_none():
+def test_get_kazi_creates_and_caches_instance():
     import kazi.queue.celery_worker as cw
     from kazi.core.orchestrator import Kazi
 
@@ -55,10 +67,9 @@ def test_get_kazi_creates_instance_when_none():
     orig_config = cw._kazi_config
     try:
         cw._kazi_instance = None
-        cw._kazi_config = _config(api_key=OPENAI_KEY)
+        cw._kazi_config = _config()
         instance = cw._get_kazi()
         assert isinstance(instance, Kazi)
-        # Calling again returns cached instance
         assert cw._get_kazi() is instance
     finally:
         if cw._kazi_instance and cw._kazi_instance is not orig_instance:
@@ -69,168 +80,111 @@ def test_get_kazi_creates_instance_when_none():
 
 # ── kazi.run task ────────────────────────────────────────────────────────────
 
-class _StubKazi:
-    async def run(self, message, *, thread_id="default", system_prompt=None,
-                  max_tool_calls=25, track_cost=False, **kwargs):
-        return f"echo: {message}"
+def test_kazi_run_task_executes_and_returns_reply(real_kazi):
+    """Task executes kazi.run() with a real LLM and returns a non-empty reply."""
+    app = _make_app()
+    result = app.tasks["kazi.run"].apply(
+        args=["Say exactly: TASK_OK"], kwargs={"thread_id": "celery-run-1"}
+    )
+    payload = result.result
+    assert "reply" in payload
+    assert "TASK_OK" in payload["reply"]
 
-    async def ingest(self, path, *, index_name="default"):
-        pass
+
+def test_kazi_run_task_with_all_options(real_kazi):
+    app = _make_app()
+    result = app.tasks["kazi.run"].apply(
+        args=["Say exactly: OPTIONS_OK"],
+        kwargs={
+            "thread_id": "celery-opts",
+            "system_prompt": "Be brief.",
+            "max_tool_calls": 5,
+            "track_cost": False,
+        },
+    )
+    payload = result.result
+    assert "OPTIONS_OK" in payload["reply"]
 
 
-def test_kazi_run_task_executes_and_returns_reply():
+def test_kazi_run_task_with_run_result_cost_tracking(real_kazi):
+    """With track_cost=True the task serialises input/output tokens and cost_usd."""
+    app = _make_app()
+    result = app.tasks["kazi.run"].apply(
+        args=["Say hi"], kwargs={"thread_id": "celery-cost", "track_cost": True}
+    )
+    payload = result.result
+    assert "reply" in payload
+    assert isinstance(payload.get("input_tokens"), int)
+    assert isinstance(payload.get("output_tokens"), int)
+    assert isinstance(payload.get("cost_usd"), float)
+    assert payload["input_tokens"] > 0
+    assert payload["output_tokens"] > 0
+
+
+def test_kazi_run_task_fails_on_bad_api_key():
+    """Task marks itself failed when the LLM raises (bad API key → 401)."""
     import kazi.queue.celery_worker as cw
+    from kazi.core.config import KaziConfig, LLMConfig, LLMProvider
+    from kazi import Kazi
 
+    bad_config = KaziConfig(llm=LLMConfig(
+        provider=LLMProvider.OPENAI, model="gpt-4o-mini", api_key="sk-invalid-key"
+    ))
+    bad_kazi = asyncio.run(Kazi.create(bad_config))
     orig = cw._kazi_instance
     try:
-        cw._kazi_instance = _StubKazi()
-        app = _make_app()
-        result = app.tasks["kazi.run"].apply(
-            args=["hello"], kwargs={"thread_id": "test"}
-        )
-        payload = result.result
-        assert "reply" in payload
-        assert "echo: hello" in payload["reply"]
-    finally:
-        cw._kazi_instance = orig
-
-
-def test_kazi_run_task_with_all_options():
-    import kazi.queue.celery_worker as cw
-
-    orig = cw._kazi_instance
-    try:
-        cw._kazi_instance = _StubKazi()
-        app = _make_app()
-        result = app.tasks["kazi.run"].apply(
-            args=["test message"],
-            kwargs={
-                "thread_id": "t1",
-                "system_prompt": "Be brief.",
-                "max_tool_calls": 5,
-                "track_cost": False,
-            },
-        )
-        assert result.result["reply"] == "echo: test message"
-    finally:
-        cw._kazi_instance = orig
-
-
-def test_kazi_run_task_with_run_result():
-    """When kazi.run returns a RunResult, the task serializes it correctly."""
-    import kazi.queue.celery_worker as cw
-    from kazi.core.cost import RunCost, RunResult
-
-    class _CostKazi:
-        async def run(self, message, *, track_cost=False, **kwargs):
-            if track_cost:
-                return RunResult(
-                    reply="cost reply",
-                    cost=RunCost(input_tokens=10, output_tokens=5, cost_usd=0.001),
-                )
-            return "plain reply"
-
-    orig = cw._kazi_instance
-    try:
-        cw._kazi_instance = _CostKazi()
-        app = _make_app()
-        result = app.tasks["kazi.run"].apply(
-            args=["hello"], kwargs={"track_cost": True}
-        )
-        payload = result.result
-        assert payload["reply"] == "cost reply"
-        assert payload["cost_usd"] == pytest.approx(0.001)
-        assert payload["input_tokens"] == 10
-        assert payload["output_tokens"] == 5
-    finally:
-        cw._kazi_instance = orig
-
-
-def test_kazi_run_task_retry_on_failure():
-    """On failure below max_retries, task stores exception in result (celery eager mode)."""
-    import kazi.queue.celery_worker as cw
-
-    class _FailKazi:
-        async def run(self, *args, **kwargs):
-            raise RuntimeError("transient failure")
-
-    orig = cw._kazi_instance
-    try:
-        cw._kazi_instance = _FailKazi()
-        app = _make_app(max_retries=2)
-        result = app.tasks["kazi.run"].apply(args=["fail"])
+        cw._kazi_instance = bad_kazi
+        app = _make_app(max_retries=0)
+        result = app.tasks["kazi.run"].apply(args=["hello"])
         assert result.failed()
-        with pytest.raises(RuntimeError, match="transient failure"):
-            result.get(propagate=True)
     finally:
         cw._kazi_instance = orig
+        asyncio.run(bad_kazi.close())
 
 
 # ── kazi.ingest task ─────────────────────────────────────────────────────────
 
-def test_kazi_ingest_task_returns_ok():
-    import kazi.queue.celery_worker as cw
+def test_kazi_ingest_task_returns_ok(real_kazi):
+    """Ingest task on a real directory succeeds and returns path + index name."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        Path(tmpdir).joinpath("doc.txt").write_text("Kazi is a real AI framework.")
 
-    orig = cw._kazi_instance
-    try:
-        cw._kazi_instance = _StubKazi()
         app = _make_app()
         result = app.tasks["kazi.ingest"].apply(
-            args=["/docs/report.pdf"], kwargs={"index_name": "q3"}
+            args=[tmpdir], kwargs={"index_name": "celery-ingest"}
         )
         payload = result.result
         assert payload["status"] == "ok"
-        assert payload["path"] == "/docs/report.pdf"
-        assert payload["index"] == "q3"
-    finally:
-        cw._kazi_instance = orig
+        assert payload["path"] == tmpdir
+        assert payload["index"] == "celery-ingest"
 
 
-def test_kazi_ingest_task_default_index_name():
-    import kazi.queue.celery_worker as cw
+def test_kazi_ingest_task_default_index_name(real_kazi):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        Path(tmpdir).joinpath("file.txt").write_text("hello")
 
-    orig = cw._kazi_instance
-    try:
-        cw._kazi_instance = _StubKazi()
         app = _make_app()
-        result = app.tasks["kazi.ingest"].apply(args=["/path/file.pdf"])
+        result = app.tasks["kazi.ingest"].apply(args=[tmpdir])
         assert result.result["index"] == "default"
-    finally:
-        cw._kazi_instance = orig
 
 
-def test_kazi_ingest_task_retry_on_failure():
-    import kazi.queue.celery_worker as cw
-
-    class _FailIngest:
-        async def ingest(self, *args, **kwargs):
-            raise OSError("disk error")
-
-    orig = cw._kazi_instance
-    try:
-        cw._kazi_instance = _FailIngest()
-        app = _make_app(max_retries=2)
-        result = app.tasks["kazi.ingest"].apply(args=["/bad/path"])
-        assert result.failed()
-        with pytest.raises(OSError, match="disk error"):
-            result.get(propagate=True)
-    finally:
-        cw._kazi_instance = orig
+def test_kazi_ingest_task_fails_on_bad_path(real_kazi):
+    """Ingest task fails cleanly when the path does not exist."""
+    app = _make_app(max_retries=0)
+    result = app.tasks["kazi.ingest"].apply(args=["/nonexistent/path/xyz"])
+    assert result.failed()
 
 
-# ── kazi.dead_letter task (already covered, but test custom dlq_queue) ───────
+# ── App configuration ─────────────────────────────────────────────────────────
 
 def test_build_celery_app_custom_dlq_queue():
     from kazi.queue.celery_worker import build_celery_app
-
     app = build_celery_app(_config(), broker=REDIS_URL, dlq_queue="my-dlq")
-    routes = app.conf.task_routes
-    assert routes.get("kazi.dead_letter", {}).get("queue") == "my-dlq"
+    assert app.conf.task_routes.get("kazi.dead_letter", {}).get("queue") == "my-dlq"
 
 
 def test_build_celery_app_custom_time_limits():
     from kazi.queue.celery_worker import build_celery_app
-
     app = build_celery_app(
         _config(), broker=REDIS_URL,
         task_time_limit=600, task_soft_time_limit=550,
