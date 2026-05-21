@@ -56,4 +56,6 @@ jobs:
       # via [tool.pytest.ini_options] pythonpath in pyproject.toml — the kazi-*
       # packages are intentionally NOT installed (they'd shadow it with subsets).
       - name: Run unit + integration tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: pytest tests/unit/ tests/integration/ -q --cov=kazi --cov-report=term-missing --cov-fail-under=57

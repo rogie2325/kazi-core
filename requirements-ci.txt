@@ -48,3 +48,4 @@ mcp>=1.0
 # RAG / embedding (custom provider integration tests)
 llama-index-core>=0.10
 llama-index-llms-openai>=0.1
+llama-index-embeddings-openai>=0.1

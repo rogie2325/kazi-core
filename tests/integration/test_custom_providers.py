@@ -5,8 +5,7 @@ Validates the escape hatches that let users plug in any LangChain chat model
 or LlamaIndex embedding model without being restricted to the four built-in
 provider enums.
 
-LLM tests require OPENAI_API_KEY (skipped otherwise).
-Embedding tests run fully offline — MockEmbedding needs no API key.
+All tests require OPENAI_API_KEY; skipped otherwise.
 """
 import os
 import tempfile
@@ -14,12 +13,18 @@ import tempfile
 import pytest
 
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+pytestmark = pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
 MODEL = "gpt-4o-mini"
+EMBED_MODEL = "text-embedding-3-small"
+
+
+def _real_embedding():
+    from llama_index.embeddings.openai import OpenAIEmbedding
+    return OpenAIEmbedding(model=EMBED_MODEL, api_key=OPENAI_KEY)
 
 
 # ── Custom LLM ────────────────────────────────────────────────────────────────
 
-@pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
 @pytest.mark.asyncio
 async def test_custom_llm_bypasses_provider_enum():
     """
@@ -34,7 +39,7 @@ async def test_custom_llm_bypasses_provider_enum():
 
     custom = ChatOpenAI(model=MODEL, api_key=OPENAI_KEY)
     config = KaziConfig(llm=LLMConfig(
-        provider=LLMProvider.LOCAL,  # would raise without Ollama running
+        provider=LLMProvider.LOCAL,
         custom_llm=custom,
     ))
     brain = GraphBrain(config, ToolRegistry())
@@ -42,7 +47,6 @@ async def test_custom_llm_bypasses_provider_enum():
     assert "CUSTOM_LLM_OK" in result
 
 
-@pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
 @pytest.mark.asyncio
 async def test_custom_llm_used_by_kazi_orchestrator():
     """custom_llm wired through Kazi.create() must produce real responses."""
@@ -61,7 +65,6 @@ async def test_custom_llm_used_by_kazi_orchestrator():
     assert "ORCHESTRATOR_CUSTOM_OK" in result
 
 
-@pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
 @pytest.mark.asyncio
 async def test_custom_llm_supports_tool_calls():
     """A custom LLM must still be able to call registered tools."""
@@ -95,7 +98,6 @@ async def test_custom_llm_supports_tool_calls():
     assert "PONG" in result
 
 
-@pytest.mark.skipif(not OPENAI_KEY, reason="OPENAI_API_KEY not set")
 @pytest.mark.asyncio
 async def test_custom_llm_multi_turn_memory():
     """Memory must work correctly with a custom LLM."""
@@ -120,21 +122,19 @@ async def test_custom_llm_multi_turn_memory():
 async def test_custom_embedding_used_for_ingestion():
     """
     custom_embedding must be passed to LlamaIndex Settings.embed_model so
-    documents can be ingested without calling any external embedding API.
+    documents are ingested using the provided embedding model.
     """
-    from llama_index.core.embeddings.mock_embed_model import MockEmbedding
-
     from kazi.core.config import LLMConfig, LLMProvider, RAGConfig
     from kazi.data.index_manager import IndexManager
 
-    embed = MockEmbedding(embed_dim=8)
+    embed = _real_embedding()
     rag = RAGConfig(custom_embedding=embed)
-    manager = IndexManager(rag, LLMConfig(provider=LLMProvider.OPENAI))
+    manager = IndexManager(rag, LLMConfig(provider=LLMProvider.OPENAI, api_key=OPENAI_KEY))
 
     await manager.ingest_documents(
         [
             {"text": "Kazi supports custom embedding models."},
-            {"text": "No OpenAI API call is needed when custom_embedding is set."},
+            {"text": "Real embeddings are used when custom_embedding is set."},
         ],
         index_name="custom_embed_test",
     )
@@ -144,76 +144,66 @@ async def test_custom_embedding_used_for_ingestion():
 
 
 @pytest.mark.asyncio
-async def test_custom_embedding_does_not_call_openai():
+async def test_custom_embedding_bypasses_provider_wiring():
     """
-    With custom_embedding set, the index manager must not instantiate
-    OpenAIEmbedding — verified by providing a non-existent API key that
-    would fail at init time if OpenAI embedding were attempted.
+    When custom_embedding is provided, the provider-specific embedding
+    setup is skipped — even if the provider is LOCAL (no Ollama required).
     """
-    from llama_index.core.embeddings.mock_embed_model import MockEmbedding
-
     from kazi.core.config import LLMConfig, LLMProvider, RAGConfig
     from kazi.data.index_manager import IndexManager
 
-    embed = MockEmbedding(embed_dim=8)
+    embed = _real_embedding()
     rag = RAGConfig(custom_embedding=embed)
-    # Deliberately bad API key — would fail if OpenAIEmbedding were constructed
-    llm = LLMConfig(provider=LLMProvider.OPENAI, api_key="sk-INVALID-KEY")
+    # provider=LOCAL would fail without Ollama if provider wiring ran
+    llm = LLMConfig(provider=LLMProvider.LOCAL)
     manager = IndexManager(rag, llm)
 
-    # Should not raise despite the invalid key, because custom_embedding skips
-    # the OpenAIEmbedding constructor
     await manager.ingest_documents(
-        [{"text": "Custom embedding bypasses API key check."}],
-        index_name="no_openai_embed",
+        [{"text": "Custom embedding bypasses provider setup."}],
+        index_name="bypass_provider",
     )
-    assert "no_openai_embed" in manager._indices
+    assert "bypass_provider" in manager._indices
 
 
 @pytest.mark.asyncio
 async def test_custom_embedding_retrieval_works():
     """Documents ingested with a custom embedding must be retrievable."""
-    from llama_index.core.embeddings.mock_embed_model import MockEmbedding
-
     from kazi.core.config import LLMConfig, LLMProvider, RAGConfig
     from kazi.data.index_manager import IndexManager
 
-    embed = MockEmbedding(embed_dim=8)
+    embed = _real_embedding()
     rag = RAGConfig(custom_embedding=embed)
-    manager = IndexManager(rag, LLMConfig(provider=LLMProvider.OPENAI))
+    manager = IndexManager(rag, LLMConfig(provider=LLMProvider.OPENAI, api_key=OPENAI_KEY))
 
     await manager.ingest_documents(
         [{"text": "The answer is forty-two."}],
         index_name="retrieval_test",
     )
 
-    # Build query engine — retriever works offline with MockEmbedding
     engine = manager.get_query_engine("retrieval_test")
     assert engine is not None
 
-    # Verify the tool definition is buildable
     tool = manager.as_tool_definition("retrieval_test")
     assert tool.name == "search_retrieval_test"
 
 
 @pytest.mark.asyncio
 async def test_custom_embedding_and_synthesis_llm_both_set():
-    """When both custom hooks are set, no provider-specific setup runs at all."""
-    from llama_index.core.embeddings.mock_embed_model import MockEmbedding
-    from llama_index.core.llms.mock import MockLLM
+    """When both custom hooks are set, ingestion uses both without falling back to provider wiring."""
+    from llama_index.llms.openai import OpenAI as LlamaOpenAI
 
     from kazi.core.config import LLMConfig, LLMProvider, RAGConfig
     from kazi.data.index_manager import IndexManager
 
-    embed = MockEmbedding(embed_dim=8)
-    synth = MockLLM()
+    embed = _real_embedding()
+    synth = LlamaOpenAI(model=MODEL, api_key=OPENAI_KEY)
     rag = RAGConfig(custom_embedding=embed, custom_synthesis_llm=synth)
-    # provider=LOCAL with no API key — would fail if provider wiring ran
+    # provider=LOCAL — proves no provider wiring runs
     llm = LLMConfig(provider=LLMProvider.LOCAL)
     manager = IndexManager(rag, llm)
 
     await manager.ingest_documents(
-        [{"text": "Fully offline ingestion with custom embed and synthesis LLM."}],
+        [{"text": "Fully real ingestion with custom embed and synthesis LLM."}],
         index_name="fully_custom",
     )
     assert "fully_custom" in manager._indices
@@ -221,18 +211,15 @@ async def test_custom_embedding_and_synthesis_llm_both_set():
 
 @pytest.mark.asyncio
 async def test_custom_embedding_directory_ingestion():
-    """ingest_directory must also respect custom_embedding."""
-    from llama_index.core.embeddings.mock_embed_model import MockEmbedding
-
+    """ingest_directory must also use the custom embedding."""
     from kazi.core.config import LLMConfig, LLMProvider, RAGConfig
     from kazi.data.index_manager import IndexManager
 
-    embed = MockEmbedding(embed_dim=8)
+    embed = _real_embedding()
     rag = RAGConfig(custom_embedding=embed)
-    manager = IndexManager(rag, LLMConfig(provider=LLMProvider.OPENAI))
+    manager = IndexManager(rag, LLMConfig(provider=LLMProvider.OPENAI, api_key=OPENAI_KEY))
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Write real text files for the directory reader
         for i, content in enumerate([
             "Kazi is an AI orchestration framework.",
             "It supports MCP, A2A, RAG, and custom LLM providers.",
