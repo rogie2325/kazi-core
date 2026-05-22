@@ -45,17 +45,43 @@ To process the dead-letter queue::
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import random
 import threading
 
 logger = logging.getLogger(__name__)
 
+# A single event loop that lives for the lifetime of the worker process.
+# All async work (Kazi creation + every task call) runs on this loop so that
+# httpx/aiohttp connection pools remain valid across calls — asyncio.run()
+# opens *and closes* a loop each time, invalidating any clients created in a
+# prior call.
+_worker_loop: asyncio.AbstractEventLoop | None = None
+_worker_loop_lock = threading.Lock()
+
 # Module-level Kazi instance — shared across tasks in the same worker process.
-# Protected by a lock so concurrent tasks don't race on initialisation.
 _kazi_instance = None
 _kazi_lock = threading.Lock()
 _kazi_config = None
+
+
+def _get_worker_loop() -> asyncio.AbstractEventLoop:
+    global _worker_loop
+    if _worker_loop is not None and not _worker_loop.is_closed():
+        return _worker_loop
+    with _worker_loop_lock:
+        if _worker_loop is None or _worker_loop.is_closed():
+            _worker_loop = asyncio.new_event_loop()
+            t = threading.Thread(target=_worker_loop.run_forever, daemon=True)
+            t.start()
+    return _worker_loop
+
+
+def _run_async(coro, timeout: int = 300):
+    """Submit a coroutine to the persistent worker loop and block until done."""
+    future = asyncio.run_coroutine_threadsafe(coro, _get_worker_loop())
+    return future.result(timeout=timeout)
 
 
 def _get_kazi():
@@ -68,7 +94,7 @@ def _get_kazi():
                 raise RuntimeError(
                     "KaziConfig not set. Call build_celery_app(config, ...) before using tasks."
                 )
-            _kazi_instance = asyncio.run(_create_kazi(_kazi_config))
+            _kazi_instance = _run_async(_create_kazi(_kazi_config))
     return _kazi_instance
 
 
@@ -154,7 +180,7 @@ def build_celery_app(
         from kazi.core.cost import RunResult
 
         try:
-            result = asyncio.run(
+            result = _run_async(
                 kazi.run(
                     message,
                     thread_id=thread_id,
@@ -202,7 +228,7 @@ def build_celery_app(
         """Ingest documents into the vector store in the background."""
         kazi = _get_kazi()
         try:
-            asyncio.run(kazi.ingest(path, index_name=index_name))
+            _run_async(kazi.ingest(path, index_name=index_name))
         except Exception as exc:
             attempt = self.request.retries
             if attempt < _max_retries:

@@ -7,7 +7,6 @@ Requires OPENAI_API_KEY and Redis on localhost:6379/15.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
 from pathlib import Path
@@ -35,16 +34,26 @@ def _make_app(config=None, **kwargs):
 
 @pytest.fixture
 def real_kazi():
-    """Real Kazi instance — started and torn down around the test."""
+    """
+    Wire a real config so _get_kazi() creates a real Kazi instance lazily
+    inside the worker's persistent event loop (same loop used by tasks).
+    """
     import kazi.queue.celery_worker as cw
-    from kazi import Kazi
 
-    kazi = asyncio.run(Kazi.create(_config()))
-    orig = cw._kazi_instance
-    cw._kazi_instance = kazi
-    yield kazi
-    cw._kazi_instance = orig
-    asyncio.run(kazi.close())
+    orig_instance = cw._kazi_instance
+    orig_config = cw._kazi_config
+    cw._kazi_instance = None
+    cw._kazi_config = _config()
+    yield
+    # Close the kazi instance that was created during the test
+    created = cw._kazi_instance
+    cw._kazi_instance = orig_instance
+    cw._kazi_config = orig_config
+    if created and created is not orig_instance:
+        try:
+            cw._run_async(created.close())
+        except Exception:
+            pass
 
 
 # ── _create_kazi / _get_kazi ─────────────────────────────────────────────────
@@ -72,10 +81,14 @@ def test_get_kazi_creates_and_caches_instance():
         assert isinstance(instance, Kazi)
         assert cw._get_kazi() is instance
     finally:
-        if cw._kazi_instance and cw._kazi_instance is not orig_instance:
-            asyncio.run(cw._kazi_instance.close())
+        created = cw._kazi_instance
         cw._kazi_instance = orig_instance
         cw._kazi_config = orig_config
+        if created and created is not orig_instance:
+            try:
+                cw._run_async(created.close())
+            except Exception:
+                pass
 
 
 # ── kazi.run task ────────────────────────────────────────────────────────────
@@ -125,21 +138,27 @@ def test_kazi_run_task_fails_on_bad_api_key():
     """Task marks itself failed when the LLM raises (bad API key → 401)."""
     import kazi.queue.celery_worker as cw
     from kazi.core.config import KaziConfig, LLMConfig, LLMProvider
-    from kazi import Kazi
 
     bad_config = KaziConfig(llm=LLMConfig(
         provider=LLMProvider.OPENAI, model="gpt-4o-mini", api_key="sk-invalid-key"
     ))
-    bad_kazi = asyncio.run(Kazi.create(bad_config))
-    orig = cw._kazi_instance
+    orig_instance = cw._kazi_instance
+    orig_config = cw._kazi_config
     try:
-        cw._kazi_instance = bad_kazi
-        app = _make_app(max_retries=0)
+        cw._kazi_instance = None
+        cw._kazi_config = bad_config
+        app = _make_app(config=bad_config, max_retries=0)
         result = app.tasks["kazi.run"].apply(args=["hello"])
         assert result.failed()
     finally:
-        cw._kazi_instance = orig
-        asyncio.run(bad_kazi.close())
+        created = cw._kazi_instance
+        cw._kazi_instance = orig_instance
+        cw._kazi_config = orig_config
+        if created and created is not orig_instance:
+            try:
+                cw._run_async(created.close())
+            except Exception:
+                pass
 
 
 # ── kazi.ingest task ─────────────────────────────────────────────────────────
